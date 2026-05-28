@@ -1,0 +1,9 @@
+name = "feishu-accounting"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+FEISHU_APP_ID = "cli_aa9d54b12a3a5cef"
+FEISHU_APP_SECRET = "QMWLpOY5LfsejB2VJ0SGGcJjzGDfEMaO"
+FEISHU_APP_TOKEN = "TkdSbetffaNJpVs9PIbcWtNOnQd"
+FEISHU_TABLE_ID = "tblPo9VuytO3uBrs"
