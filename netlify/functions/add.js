@@ -30,7 +30,7 @@ async function addRecord(appId, appSecret, appToken, tableId, amount, category, 
     '备注': note || '',
     '分类': category || '其他',
     '时间': now.toTimeString().slice(0, 8),
-    '日期': now.toISOString().slice(0, 10),
+    '日期': Math.floor(now.getTime() / 1000),
     '金额': parseFloat(amount) || 0,
   };
   const resp = await fetch(
