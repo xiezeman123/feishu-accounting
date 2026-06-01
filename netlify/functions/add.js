@@ -55,7 +55,7 @@ async function addRecord(appId, appSecret, appToken, tableId, amount, category, 
   return data.data?.record?.record_id;
 }
 
-// 从 OCR 文本中提取金额
+// 从 OCR 文本中提取单笔金额
 function extractAmount(text) {
   // 清理 OCR 噪声
   const clean = text.replace(/·/g, '¥').replace(/，/g, ',');
@@ -74,6 +74,29 @@ function extractAmount(text) {
     }
   }
   return null;
+}
+
+// 从 OCR 文本中提取多笔交易（上限10笔）
+function extractAllTransactions(text) {
+  const clean = text.replace(/·/g, '¥').replace(/，/g, ',');
+  const amountPattern = /(?:[¥￥])\s*(\d+\.\d{1,2})|(\d+\.\d{1,2})\s*元/g;
+  
+  const transactions = [];
+  let match;
+  let count = 0;
+  while ((match = amountPattern.exec(clean)) !== null && count < 10) {
+    const val = match[1] || match[2];
+    const num = parseFloat(val);
+    if (num > 0 && num < 1000000) {
+      // 尝试找到对应的交易对手（如林朴朴、京东等）
+      const beforePos = Math.max(0, match.index - 50);
+      const afterPos = Math.min(clean.length, match.index + 20);
+      const context = clean.slice(beforePos, afterPos);
+      transactions.push({ amount: num, context: context });
+      count++;
+    }
+  }
+  return transactions;
 }
 
 // 从 OCR 文本中推断分类
@@ -130,12 +153,35 @@ exports.handler = async function (event, context) {
     let amount, category, note;
     const params = event.queryStringParameters || {};
 
-    // 模式 1: GET ?text=... （OCR 文本模式）
+    // 模式 1: GET ?text=... （OCR 文本模式）- 支持多笔
     if (params.text) {
       const text = decodeURIComponent(params.text);
-      amount = extractAmount(text);
-      category = inferCategory(text);
-      note = text.slice(0, 200);
+      const txns = extractAllTransactions(text);
+      
+      if (txns.length > 0) {
+        // 多笔：批量写入
+        const results = [];
+        for (const txn of txns) {
+          const cat = inferCategory(txn.context);
+          const recordNote = txn.context.slice(0, 200);
+          const recordId = await addRecord(appId, appSecret, appToken, tableId, txn.amount, cat, recordNote);
+          results.push({ record_id: recordId, amount: txn.amount, category: cat });
+        }
+        return {
+          statusCode: 200,
+          headers: { 'Access-Control-Allow-Origin': origin, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'ok',
+            count: results.length,
+            records: results,
+          }),
+        };
+      } else {
+        // 单笔 fallback
+        amount = extractAmount(text);
+        category = inferCategory(text);
+        note = text.slice(0, 200);
+      }
     }
 
     // 模式 2: 图片上传（multipart）
