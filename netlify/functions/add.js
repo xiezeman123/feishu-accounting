@@ -1,7 +1,8 @@
 // Netlify Function: /.netlify/functions/add
-// 支持两种模式：
+// 支持三种模式：
 // 1. GET/POST JSON: amount, category, note 参数（原有模式）
-// 2. POST multipart: image 字段（截图 OCR 模式）
+// 2. GET ?text=... 模式：从 OCR 文本自动提取金额和分类
+// 3. POST multipart: image 字段（截图 OCR 模式）
 
 let cachedToken = null;
 let tokenExpiry = 0;
@@ -127,55 +128,34 @@ exports.handler = async function (event, context) {
 
   try {
     let amount, category, note;
+    const params = event.queryStringParameters || {};
 
-    // 模式 1: 图片上传（OCR 模式）
-    const contentType = event.headers['content-type'] || '';
-    if (contentType.includes('multipart/form-data') && event.body) {
-      // 解析 base64 图片（iOS 快捷指令 POST 表单时图片是 base64）
-      // iOS Shortcuts 发送图片时会用 multipart，但图片数据可能需要特殊处理
-      // 这里我们用简单方式：尝试从 body 中提取信息
+    // 模式 1: GET ?text=... （OCR 文本模式）
+    if (params.text) {
+      const text = decodeURIComponent(params.text);
+      amount = extractAmount(text);
+      category = inferCategory(text);
+      note = text.slice(0, 200);
+    }
 
-      // 如果是 base64 编码的图片数据
-      const body = event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString() : event.body;
-
-      // 尝试提取图片中的文字（使用简单的启发式方法）
-      // 注意：Netlify Functions 无法直接做 OCR，这里返回提示
-      // 实际方案：iOS 端先 OCR，再传文本结果
-
-      // 检查是否有 image 字段或纯图片数据
-      if (body.length > 1000) {
-        // 这是图片数据，无法在服务端 OCR
-        // 返回提示让 iOS 端先做 OCR 再传结果
-        return {
-          statusCode: 400,
-          headers: { 'Access-Control-Allow-Origin': origin, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            error: 'IMAGE_MODE',
-            message: '服务端不支持直接 OCR，请在快捷指令中使用「识别图像中的文本」后以 JSON 方式发送结果',
-          }),
-        };
-      }
-
-      // 尝试作为表单解析
-      const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/);
-      if (boundaryMatch) {
-        const fields = parseMultipart(body, (boundaryMatch[1] || boundaryMatch[2]).trim());
-        if (fields.text) {
-          // iOS 端已 OCR，传了文本
-          amount = extractAmount(fields.text);
-          category = inferCategory(fields.text);
-          note = fields.text.slice(0, 200);
-        } else if (fields.image) {
-          return {
-            statusCode: 400,
-            headers: { 'Access-Control-Allow-Origin': origin, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: '请先在快捷指令中 OCR 识别图片，再发送文本结果' }),
-          };
+    // 模式 2: 图片上传（multipart）
+    if (!amount) {
+      const contentType = event.headers['content-type'] || '';
+      if (contentType.includes('multipart/form-data') && event.body) {
+        const body = event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString() : event.body;
+        const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/);
+        if (boundaryMatch) {
+          const fields = parseMultipart(body, (boundaryMatch[1] || boundaryMatch[2]).trim());
+          if (fields.text) {
+            amount = extractAmount(fields.text);
+            category = inferCategory(fields.text);
+            note = fields.text.slice(0, 200);
+          }
         }
       }
     }
 
-    // 模式 2: JSON body
+    // 模式 3: JSON body
     if (!amount && event.body) {
       try {
         const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
@@ -184,7 +164,6 @@ exports.handler = async function (event, context) {
           category = body.category || inferCategory(body.note || '');
           note = body.note || '';
         } else if (body.text) {
-          // OCR 文本模式
           amount = extractAmount(body.text);
           category = inferCategory(body.text);
           note = body.text.slice(0, 200);
@@ -194,9 +173,8 @@ exports.handler = async function (event, context) {
       }
     }
 
-    // 模式 3: query params（原有模式）
+    // 模式 4: query params（原有模式）
     if (!amount) {
-      const params = event.queryStringParameters || {};
       amount = params.amount;
       category = params.category;
       note = params.note;
@@ -206,7 +184,7 @@ exports.handler = async function (event, context) {
       return {
         statusCode: 400,
         headers: { 'Access-Control-Allow-Origin': origin, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'missing amount', hint: '提供 amount 参数或上传包含金额的 OCR 文本' }),
+        body: JSON.stringify({ error: 'missing amount', hint: '提供 amount 参数或上传包含金额的 OCR 文本', debug_params: params }),
       };
     }
 
