@@ -57,19 +57,19 @@ async function addRecord(appId, appSecret, appToken, tableId, amount, category, 
 
 // 从 OCR 文本中提取金额
 function extractAmount(text) {
-  // 匹配 -317.57 或 ¥317.57 或 ￥317.57 等格式
+  // 清理 OCR 噪声
+  const clean = text.replace(/·/g, '¥').replace(/，/g, ',');
+
+  // 优先匹配带前缀的金额：¥121.70、121.70元、纯数字 121.70
   const patterns = [
-    /[-¥￥]?\d{1,6}\.\d{2}/,
-    /金额[：:]\s*([¥￥]?\d+\.?\d*)/,
-    /支付[：:]\s*([¥￥]?\d+\.?\d*)/,
-    /(\d{1,6}\.\d{2})\s*(元|CNY)?/,
+    /(?:[¥￥])\s*(\d+\.\d{1,2})/,     // ¥121.70
+    /(\d+\.\d{1,2})\s*元/,           // 121.70元
+    /(\d+\.\d{1,2})/,                // 121.70
   ];
   for (const p of patterns) {
-    const m = text.match(p);
+    const m = clean.match(p);
     if (m) {
-      let val = m[1] || m[0];
-      val = val.replace(/[¥￥]/g, '');
-      const num = parseFloat(val);
+      const num = parseFloat(m[1]);
       if (num > 0 && num < 1000000) return num;
     }
   }
